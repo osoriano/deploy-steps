@@ -1,4 +1,4 @@
-# GitHub Check Deploy Step
+# deploy-steps-github-check
 
 This contains steps to start or complete a GitHub check run.
 

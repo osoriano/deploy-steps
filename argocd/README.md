@@ -1,4 +1,4 @@
-# argocd deploy step
+# deploy-steps-argocd
 
 Steps:
 - Deploys a new version of a resource by updating the image tag in git
