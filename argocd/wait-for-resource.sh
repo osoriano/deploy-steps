@@ -15,28 +15,28 @@ wait-for-resource() {
   case "${kind}" in
     Rollout)
       echo "Waiting for rollout"
-      kubectl wait -f "${resource_path}" --timeout=5m --for=jsonpath="{.metadata.labels['app\.kubernetes\.io/version']}=${new_tag}"
+      kubectl wait -f "${resource_path}" --timeout=-1s --for=jsonpath="{.metadata.labels['app\.kubernetes\.io/version']}=${new_tag}"
       echo "Rollout is at version: ${new_tag}"
 
       num_replicas="$(kubectl get -f "${resource_path}" -o "jsonpath={.spec.replicas}")"
       echo "Waiting for ${num_replicas} replicas"
-      kubectl wait -f "${resource_path}" --timeout=5m --for=jsonpath="{.status.updatedReplicas}=${num_replicas}"
-      kubectl wait -f "${resource_path}" --timeout=5m --for=jsonpath="{.status.readyReplicas}=${num_replicas}"
-      kubectl wait -f "${resource_path}" --timeout=5m --for=jsonpath="{.status.availableReplicas}=${num_replicas}"
+      kubectl wait -f "${resource_path}" --timeout=-1s --for=jsonpath="{.status.updatedReplicas}=${num_replicas}"
+      kubectl wait -f "${resource_path}" --timeout=-1s --for=jsonpath="{.status.readyReplicas}=${num_replicas}"
+      kubectl wait -f "${resource_path}" --timeout=-1s --for=jsonpath="{.status.availableReplicas}=${num_replicas}"
       echo "Rollout completed"
       return 0
       ;;
 
     Deployment)
       echo "Waiting for deployment"
-      kubectl wait -f "${resource_path}" --timeout=5m --for=jsonpath="{.metadata.labels['app\.kubernetes\.io/version']}=${new_tag}"
+      kubectl wait -f "${resource_path}" --timeout=-1s --for=jsonpath="{.metadata.labels['app\.kubernetes\.io/version']}=${new_tag}"
       echo "Deployment is at version: ${new_tag}"
 
       num_replicas="$(kubectl get -f "${resource_path}" -o "jsonpath={.spec.replicas}")"
       echo "Waiting for ${num_replicas} replicas"
-      kubectl wait -f "${resource_path}" --timeout=5m --for=jsonpath="{.status.updatedReplicas}=${num_replicas}"
-      kubectl wait -f "${resource_path}" --timeout=5m --for=jsonpath="{.status.readyReplicas}=${num_replicas}"
-      kubectl wait -f "${resource_path}" --timeout=5m --for=jsonpath="{.status.availableReplicas}=${num_replicas}"
+      kubectl wait -f "${resource_path}" --timeout=-1s --for=jsonpath="{.status.updatedReplicas}=${num_replicas}"
+      kubectl wait -f "${resource_path}" --timeout=-1s --for=jsonpath="{.status.readyReplicas}=${num_replicas}"
+      kubectl wait -f "${resource_path}" --timeout=-1s --for=jsonpath="{.status.availableReplicas}=${num_replicas}"
       echo "Deployment completed"
       return 0
       ;;
