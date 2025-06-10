@@ -3,10 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/spf13/cobra"
 )
 
@@ -122,6 +124,16 @@ func handlePrCmd(cmd *cobra.Command, ards []string) error {
 		return fmt.Errorf("error processing base-revision-ref flag")
 	}
 
+	dockerfile, err := prFlags.GetString("dockerfile")
+	if err != nil {
+		return fmt.Errorf("error processing pr dockerfile flag")
+	}
+
+	dockerContextDir, err := prFlags.GetString("docker-context-dir")
+	if err != nil {
+		return fmt.Errorf("error processing pr docker-context-dir flag")
+	}
+
 	// Print command flags
 	fmt.Printf("PR build with params:\n")
 	fmt.Printf("- repo: %s\n", repoCloneUrl)
@@ -130,6 +142,8 @@ func handlePrCmd(cmd *cobra.Command, ards []string) error {
 	fmt.Printf("- prRevisionRef: %s\n", prRevisionRef)
 	fmt.Printf("- baseRevisionHash: %s\n", baseRevisionHash)
 	fmt.Printf("- baseRevisionRef: %s\n", baseRevisionRef)
+	fmt.Printf("- dockerfile: %s\n", dockerfile)
+	fmt.Printf("- dockerContextDir: %s\n", dockerContextDir)
 
 	// Run command
 	// Initialize repo
@@ -201,20 +215,8 @@ func handlePrCmd(cmd *cobra.Command, ards []string) error {
 		return fmt.Errorf("error in pr git patch: %s", err)
 	}
 
-	changedPaths := make(map[string]struct{})
-	for _, filePatch := range patch.FilePatches() {
-		from, to := filePatch.Files()
-		if from != nil {
-			changedPaths[from.Path()] = struct{}{}
-		}
-		if to != nil {
-			changedPaths[to.Path()] = struct{}{}
-		}
-	}
-
-	fmt.Printf("Changed paths:\n")
-	for changedPath := range changedPaths {
-		fmt.Printf("- %s\n", changedPath)
+	if shouldBuildImage(patch, dockerfile, dockerContextDir) {
+		buildImage(dockerfile, dockerContextDir)
 	}
 
 	return nil
@@ -226,22 +228,32 @@ func handleCommitCmd(cmd *cobra.Command, ards []string) error {
 
 	repoCloneUrl, err := commitFlags.GetString("repo")
 	if err != nil {
-		return fmt.Errorf("error processing pr repo flag")
+		return fmt.Errorf("error processing commit repo flag")
 	}
 
 	clonePath, err := commitFlags.GetString("clone-path")
 	if err != nil {
-		return fmt.Errorf("error processing pr clone-path flag")
+		return fmt.Errorf("error processing commit clone-path flag")
 	}
 
 	revisionHash, err := commitFlags.GetString("revision-hash")
 	if err != nil {
-		return fmt.Errorf("error processing revision-hash flag")
+		return fmt.Errorf("error processing commit revision-hash flag")
 	}
 
 	revisionRef, err := commitFlags.GetString("revision-ref")
 	if err != nil {
-		return fmt.Errorf("error processing -revision-ref flag")
+		return fmt.Errorf("error processing commit revision-ref flag")
+	}
+
+	dockerfile, err := commitFlags.GetString("dockerfile")
+	if err != nil {
+		return fmt.Errorf("error processing commit dockerfile flag")
+	}
+
+	dockerContextDir, err := commitFlags.GetString("docker-context-dir")
+	if err != nil {
+		return fmt.Errorf("error processing commit docker-context-dir flag")
 	}
 
 	// Print command flags
@@ -250,6 +262,8 @@ func handleCommitCmd(cmd *cobra.Command, ards []string) error {
 	fmt.Printf("- clonePath: %s\n", clonePath)
 	fmt.Printf("- revisionHash: %s\n", revisionHash)
 	fmt.Printf("- revisionRef: %s\n", revisionRef)
+	fmt.Printf("- dockerfile: %s\n", dockerfile)
+	fmt.Printf("- dockerContextDir: %s\n", dockerContextDir)
 
 	// Run command
 	// Initialize repo
@@ -320,6 +334,22 @@ func handleCommitCmd(cmd *cobra.Command, ards []string) error {
 		return fmt.Errorf("error in git commit patch: %s", err)
 	}
 
+	if shouldBuildImage(patch, dockerfile, dockerContextDir) {
+		buildImage(dockerfile, dockerContextDir)
+	}
+
+	return nil
+}
+
+func shouldBuildImage(patch *object.Patch, dockerfile string, dockerContextDir string) bool {
+	dockerfile = strings.TrimSpace(dockerfile)
+	dockerContextDir = strings.TrimSpace(dockerContextDir)
+
+	if dockerContextDir == "" {
+		fmt.Println("Building image since dockerContextDir is empty")
+		return true
+	}
+
 	changedPaths := make(map[string]struct{})
 	for _, filePatch := range patch.FilePatches() {
 		from, to := filePatch.Files()
@@ -336,7 +366,20 @@ func handleCommitCmd(cmd *cobra.Command, ards []string) error {
 		fmt.Printf("- %s\n", changedPath)
 	}
 
-	return nil
+	for changedPath := range changedPaths {
+		if strings.HasPrefix(changedPath, dockerContextDir) {
+			return true
+		}
+		if changedPath == dockerfile {
+			return true
+		}
+	}
+
+	fmt.Println("Skip image build due to no matching files")
+	return false
+}
+
+func buildImage(dockerfile string, dockerContextDir string) {
 }
 
 func main() {
