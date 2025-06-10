@@ -124,14 +124,15 @@ func handlePrCmd(cmd *cobra.Command, ards []string) error {
 
 	// Print command flags
 	fmt.Printf("PR build with params:\n")
-	fmt.Printf("  repo: %s\n", repoCloneUrl)
-	fmt.Printf("  clonePath: %s\n", clonePath)
-	fmt.Printf("  prRevisionHash: %s\n", prRevisionHash)
-	fmt.Printf("  prRevisionRef: %s\n", prRevisionRef)
-	fmt.Printf("  baseRevisionHash: %s\n", baseRevisionHash)
-	fmt.Printf("  baseRevisionRef: %s\n", baseRevisionRef)
+	fmt.Printf("- repo: %s\n", repoCloneUrl)
+	fmt.Printf("- clonePath: %s\n", clonePath)
+	fmt.Printf("- prRevisionHash: %s\n", prRevisionHash)
+	fmt.Printf("- prRevisionRef: %s\n", prRevisionRef)
+	fmt.Printf("- baseRevisionHash: %s\n", baseRevisionHash)
+	fmt.Printf("- baseRevisionRef: %s\n", baseRevisionRef)
 
 	// Run command
+	// Initialize repo
 	initOptions := git.PlainInitOptions{
 		InitOptions: git.InitOptions{
 			DefaultBranch: plumbing.ReferenceName(baseRevisionRef),
@@ -151,6 +152,7 @@ func handlePrCmd(cmd *cobra.Command, ards []string) error {
 		return fmt.Errorf("error in pr git remote config: %s", err)
 	}
 
+	// Fetch base and pr commits
 	baseRefSpec := fmt.Sprintf("%s:%s", baseRevisionHash, baseRevisionRef)
 	baseFetchOptions := git.FetchOptions{
 		Depth:    1,
@@ -172,6 +174,7 @@ func handlePrCmd(cmd *cobra.Command, ards []string) error {
 		return fmt.Errorf("error in pr git fetch pr: %s", err)
 	}
 
+	// Checkout pr commit
 	workTree, err := repo.Worktree()
 	if err != nil {
 		return fmt.Errorf("error in pr git worktree: %s", err)
@@ -183,6 +186,37 @@ func handlePrCmd(cmd *cobra.Command, ards []string) error {
 	if err != nil {
 		return fmt.Errorf("error in pr git checkout: %s", err)
 	}
+
+	// Check diff between pr and base commits
+	baseCommit, err := repo.CommitObject(plumbing.NewHash(baseRevisionHash))
+	if err != nil {
+		return fmt.Errorf("error in base git commit: %s", err)
+	}
+	prCommit, err := repo.CommitObject(plumbing.NewHash(prRevisionHash))
+	if err != nil {
+		return fmt.Errorf("error in pr git commit: %s", err)
+	}
+	patch, err := baseCommit.Patch(prCommit)
+	if err != nil {
+		return fmt.Errorf("error in pr git patch: %s", err)
+	}
+
+	changedPaths := make(map[string]struct{})
+	for _, filePatch := range patch.FilePatches() {
+		from, to := filePatch.Files()
+		if from != nil {
+			changedPaths[from.Path()] = struct{}{}
+		}
+		if to != nil {
+			changedPaths[to.Path()] = struct{}{}
+		}
+	}
+
+	fmt.Printf("Changed paths:\n")
+	for changedPath := range changedPaths {
+		fmt.Printf("- %s\n", changedPath)
+	}
+
 	return nil
 }
 
@@ -212,12 +246,13 @@ func handleCommitCmd(cmd *cobra.Command, ards []string) error {
 
 	// Print command flags
 	fmt.Printf("Commmit build with params:\n")
-	fmt.Printf("  repo: %s\n", repoCloneUrl)
-	fmt.Printf("  clonePath: %s\n", clonePath)
-	fmt.Printf("  revisionHash: %s\n", revisionHash)
-	fmt.Printf("  revisionRef: %s\n", revisionRef)
+	fmt.Printf("- repo: %s\n", repoCloneUrl)
+	fmt.Printf("- clonePath: %s\n", clonePath)
+	fmt.Printf("- revisionHash: %s\n", revisionHash)
+	fmt.Printf("- revisionRef: %s\n", revisionRef)
 
 	// Run command
+	// Initialize repo
 	initOptions := git.PlainInitOptions{
 		InitOptions: git.InitOptions{
 			DefaultBranch: plumbing.ReferenceName(revisionRef),
@@ -237,6 +272,7 @@ func handleCommitCmd(cmd *cobra.Command, ards []string) error {
 		return fmt.Errorf("error in commit git remote config: %s", err)
 	}
 
+	// Fetch commit
 	refSpec := fmt.Sprintf("%s:%s", revisionHash, revisionRef)
 	fetchOptions := git.FetchOptions{
 		Depth:    2,
@@ -248,6 +284,7 @@ func handleCommitCmd(cmd *cobra.Command, ards []string) error {
 		return fmt.Errorf("error in commit git fetch pr: %s", err)
 	}
 
+	// Checkout commit
 	workTree, err := repo.Worktree()
 	if err != nil {
 		return fmt.Errorf("error in commit git worktree: %s", err)
@@ -258,6 +295,45 @@ func handleCommitCmd(cmd *cobra.Command, ards []string) error {
 	err = workTree.Checkout(&checkoutOptions)
 	if err != nil {
 		return fmt.Errorf("error in commit git checkout: %s", err)
+	}
+
+	// Check commit diff
+	commit, err := repo.CommitObject(plumbing.NewHash(revisionHash))
+	if err != nil {
+		return fmt.Errorf("error in git commit: %s", err)
+	}
+	if commit.NumParents() != 1 {
+		return fmt.Errorf(
+			"expected commit (%s) to have one parent but found: %d",
+			revisionHash,
+			commit.NumParents(),
+		)
+	}
+
+	parent, err := commit.Parents().Next()
+	if err != nil {
+		return fmt.Errorf("error in git commit parent: %s", err)
+	}
+
+	patch, err := parent.Patch(commit)
+	if err != nil {
+		return fmt.Errorf("error in git commit patch: %s", err)
+	}
+
+	changedPaths := make(map[string]struct{})
+	for _, filePatch := range patch.FilePatches() {
+		from, to := filePatch.Files()
+		if from != nil {
+			changedPaths[from.Path()] = struct{}{}
+		}
+		if to != nil {
+			changedPaths[to.Path()] = struct{}{}
+		}
+	}
+
+	fmt.Printf("Changed paths:\n")
+	for changedPath := range changedPaths {
+		fmt.Printf("- %s\n", changedPath)
 	}
 
 	return nil
