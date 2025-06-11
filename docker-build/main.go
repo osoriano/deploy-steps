@@ -260,6 +260,7 @@ func handlePrCmd(cmd *cobra.Command, ards []string) error {
 		return fmt.Errorf("error in pr git patch: %s", err)
 	}
 
+	// Build image if needed
 	if shouldBuildImage(patch, dockerfile, dockerContextDir) {
 		buildPrImage(clonePath, dockerfile, dockerContextDir)
 	} else {
@@ -408,6 +409,7 @@ func handleCommitCmd(cmd *cobra.Command, ards []string) error {
 		return fmt.Errorf("error in git commit patch: %s", err)
 	}
 
+	// Build image if needed
 	if shouldBuildImage(patch, dockerfile, dockerContextDir) {
 		buildCommitImage(
 			clonePath,
@@ -471,6 +473,7 @@ func writeSkipStatus(statusFile string) error {
 }
 
 func buildPrImage(clonePath string, dockerfile string, dockerContextDir string) {
+	fmt.Println("Starting image build for PR")
 	err := syscall.Exec(
 		KANIKO_PATH,
 		[]string{
@@ -495,6 +498,7 @@ func buildCommitImage(
 	dockerfileDir string,
 	revisionHash string,
 ) {
+	fmt.Println("Starting image build for commit")
 	err := syscall.Exec(
 		KANIKO_PATH,
 		[]string{
