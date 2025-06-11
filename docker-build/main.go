@@ -4,12 +4,23 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/spf13/cobra"
+)
+
+const (
+	// Path to the kaniko executable
+	// See https://github.com/GoogleContainerTools/kaniko/blob/main/deploy/Dockerfile#L96
+	KANIKO_PATH = "/kaniko/executor"
+	// Name of the kaniko executable
+	KANIKO_NAME = "executor"
+	// String written to the status-path when the image build is skipped
+	SKIPPED_STATUS = "Skipped"
 )
 
 var (
@@ -63,6 +74,13 @@ func configureCmds() {
 	prFlags.String("docker-context-dir", "", "the path to the docker context used for the build")
 	prCmd.MarkFlagRequired("docker-context-dir")
 
+	prFlags.String(
+		"status-file",
+		"",
+		"The path write the status file to. The value is set to Skipped "+
+			"if no image build was performed and can be accessed if the execution was successful")
+	prCmd.MarkFlagRequired("status-file")
+
 	commitFlags := commitCmd.Flags()
 
 	commitFlags.String("repo", "", "the repo clone url")
@@ -82,6 +100,27 @@ func configureCmds() {
 
 	commitFlags.String("docker-context-dir", "", "the path to the docker context used for the build")
 	commitCmd.MarkFlagRequired("docker-context-dir")
+
+	commitFlags.String(
+		"status-file",
+		"",
+		"The path write the status file to. The value is set to Skipped "+
+			"if no image build was performed and can be accessed if the execution was successful")
+	commitCmd.MarkFlagRequired("status-file")
+
+	commitFlags.String("image-registry", "", "The image registry used for pushing images. Set to blank to use docker hub")
+	commitCmd.MarkFlagRequired("image-registry")
+
+	commitFlags.String("image-repo", "", "The image repo used for pushing images. Typically the repo short name")
+	commitCmd.MarkFlagRequired("image-repo")
+
+	commitFlags.String(
+		"dockerfile-dir",
+		"",
+		"The dockerfile-dir is used as a suffix in the image repo. "+
+			"This can be blank, but can be set to distinguish images in a monorepo. "+
+			"The full image format is: <image-registry><image-repo><dockerfile-dir>:<revision>")
+	commitCmd.MarkFlagRequired("dockerfile-dir")
 
 	mainCmd.AddCommand(prCmd, commitCmd)
 }
@@ -134,6 +173,11 @@ func handlePrCmd(cmd *cobra.Command, ards []string) error {
 		return fmt.Errorf("error processing pr docker-context-dir flag")
 	}
 
+	statusFile, err := prFlags.GetString("status-file")
+	if err != nil {
+		return fmt.Errorf("error processing pr status-file flag")
+	}
+
 	// Print command flags
 	fmt.Printf("PR build with params:\n")
 	fmt.Printf("- repo: %s\n", repoCloneUrl)
@@ -144,6 +188,7 @@ func handlePrCmd(cmd *cobra.Command, ards []string) error {
 	fmt.Printf("- baseRevisionRef: %s\n", baseRevisionRef)
 	fmt.Printf("- dockerfile: %s\n", dockerfile)
 	fmt.Printf("- dockerContextDir: %s\n", dockerContextDir)
+	fmt.Printf("- statusFile: %s\n", statusFile)
 
 	// Run command
 	// Initialize repo
@@ -216,7 +261,12 @@ func handlePrCmd(cmd *cobra.Command, ards []string) error {
 	}
 
 	if shouldBuildImage(patch, dockerfile, dockerContextDir) {
-		buildImage(dockerfile, dockerContextDir)
+		buildPrImage(clonePath, dockerfile, dockerContextDir)
+	} else {
+		err = writeSkipStatus(statusFile)
+		if err != nil {
+			return fmt.Errorf("error writing pr status file: %s", err)
+		}
 	}
 
 	return nil
@@ -256,6 +306,26 @@ func handleCommitCmd(cmd *cobra.Command, ards []string) error {
 		return fmt.Errorf("error processing commit docker-context-dir flag")
 	}
 
+	statusFile, err := commitFlags.GetString("status-file")
+	if err != nil {
+		return fmt.Errorf("error processing commit status-file flag")
+	}
+
+	imageRegistry, err := commitFlags.GetString("image-registry")
+	if err != nil {
+		return fmt.Errorf("error processing commit image-registry flag")
+	}
+
+	imageRepo, err := commitFlags.GetString("image-repo")
+	if err != nil {
+		return fmt.Errorf("error processing commit image-repo flag")
+	}
+
+	dockerfileDir, err := commitFlags.GetString("dockerfile-dir")
+	if err != nil {
+		return fmt.Errorf("error processing commit dockerfile-dir flag")
+	}
+
 	// Print command flags
 	fmt.Printf("Commmit build with params:\n")
 	fmt.Printf("- repo: %s\n", repoCloneUrl)
@@ -264,6 +334,10 @@ func handleCommitCmd(cmd *cobra.Command, ards []string) error {
 	fmt.Printf("- revisionRef: %s\n", revisionRef)
 	fmt.Printf("- dockerfile: %s\n", dockerfile)
 	fmt.Printf("- dockerContextDir: %s\n", dockerContextDir)
+	fmt.Printf("- statusFile: %s\n", statusFile)
+	fmt.Printf("- imageRegistry: %s\n", imageRegistry)
+	fmt.Printf("- imageRepo: %s\n", imageRepo)
+	fmt.Printf("- dockerfileDir: %s\n", dockerfileDir)
 
 	// Run command
 	// Initialize repo
@@ -335,7 +409,20 @@ func handleCommitCmd(cmd *cobra.Command, ards []string) error {
 	}
 
 	if shouldBuildImage(patch, dockerfile, dockerContextDir) {
-		buildImage(dockerfile, dockerContextDir)
+		buildCommitImage(
+			clonePath,
+			dockerfile,
+			dockerContextDir,
+			imageRegistry,
+			imageRepo,
+			dockerfileDir,
+			revisionHash,
+		)
+	} else {
+		err = writeSkipStatus(statusFile)
+		if err != nil {
+			return fmt.Errorf("error writing commit status file: %s", err)
+		}
 	}
 
 	return nil
@@ -379,7 +466,54 @@ func shouldBuildImage(patch *object.Patch, dockerfile string, dockerContextDir s
 	return false
 }
 
-func buildImage(dockerfile string, dockerContextDir string) {
+func writeSkipStatus(statusFile string) error {
+	return os.WriteFile(statusFile, []byte(SKIPPED_STATUS), 0644)
+}
+
+func buildPrImage(clonePath string, dockerfile string, dockerContextDir string) {
+	err := syscall.Exec(
+		KANIKO_PATH,
+		[]string{
+			KANIKO_NAME,
+			fmt.Sprintf("--dockerfile=%s/%s", clonePath, dockerfile),
+			fmt.Sprintf("--context=dir://%s/%s", clonePath, dockerContextDir),
+			"--no-push",
+		},
+		os.Environ(),
+	)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func buildCommitImage(
+	clonePath string,
+	dockerfile string,
+	dockerContextDir string,
+	imageRegistry string,
+	imageRepo string,
+	dockerfileDir string,
+	revisionHash string,
+) {
+	err := syscall.Exec(
+		KANIKO_PATH,
+		[]string{
+			KANIKO_NAME,
+			fmt.Sprintf("--dockerfile=%s/%s", clonePath, dockerfile),
+			fmt.Sprintf("--context=dir://%s/%s", clonePath, dockerContextDir),
+			fmt.Sprintf(
+				"--destination=%s%s%s:%s",
+				imageRegistry,
+				imageRepo,
+				dockerfileDir,
+				revisionHash,
+			),
+		},
+		os.Environ(),
+	)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func main() {
